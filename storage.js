@@ -8,6 +8,12 @@
  *
  * Upstash is picked automatically when UPSTASH_REDIS_REST_URL and
  * UPSTASH_REDIS_REST_TOKEN are set. No npm packages are needed for either.
+ *
+ * What is stored:
+ *   users   username -> profile, password hash and best score
+ *   slots   "Plato:07" -> username   (one account per section + class number)
+ *   recit   "Plato|2026-11-09" -> { "7": 2, "12": 1 }   recitations per day
+ *   seen    problems each player has already been shown
  */
 'use strict';
 const fs = require('fs');
@@ -15,17 +21,29 @@ const path = require('path');
 
 const SEEN_CAP = 5000; // problems remembered per player to avoid repeats
 
+// Redis hashes come back as a flat [k, v, k, v] array (or an object, depending on the client).
+function toPairs(r) {
+  if (!r) return [];
+  if (Array.isArray(r)) {
+    const out = [];
+    for (let i = 0; i < r.length; i += 2) out.push([r[i], r[i + 1]]);
+    return out;
+  }
+  return Object.entries(r);
+}
+
 /* ------------------------------------------------------------ file store */
 class FileStore {
   constructor(dir) {
     this.kind = 'file';
     this.file = path.join(dir, 'db.json');
     fs.mkdirSync(dir, { recursive: true });
-    this.db = { meta: {}, users: {}, boards: {}, seen: {} };
+    this.db = { meta: {}, users: {}, slots: {}, recit: {}, seen: {} };
     if (fs.existsSync(this.file)) {
       try { Object.assign(this.db, JSON.parse(fs.readFileSync(this.file, 'utf8'))); }
       catch (e) { console.error('Could not read ' + this.file + ', starting empty:', e.message); }
     }
+    for (const k of ['meta', 'users', 'slots', 'recit', 'seen']) if (!this.db[k]) this.db[k] = {};
     this.timer = null;
   }
   save() {
@@ -46,38 +64,29 @@ class FileStore {
     return this.db.meta.secret;
   }
   async getUser(id) { return this.db.users[id] || null; }
-  async getUsers(ids) { return ids.map((id) => this.db.users[id] || null); }
+  async listUsers() { return Object.entries(this.db.users); }
   async createUser(id, rec) {
     if (this.db.users[id]) return false;
     this.db.users[id] = rec; this.save(); return true;
   }
   async putUser(id, rec) { this.db.users[id] = rec; this.save(); }
-  async deleteUser(id) {
-    delete this.db.users[id]; delete this.db.seen[id];
-    await this.removeScores(id);
+  async putUsers(map) { Object.assign(this.db.users, map); this.save(); }
+  async deleteUser(id) { delete this.db.users[id]; delete this.db.seen[id]; this.save(); }
+
+  async claimSlot(slot, id) {
+    if (this.db.slots[slot]) return false;
+    this.db.slots[slot] = id; this.save(); return true;
   }
-  async submitScore(boards, id, score) {
-    for (const b of boards) {
-      const board = this.db.boards[b] || (this.db.boards[b] = {});
-      if (!(id in board) || score > board[id]) board[id] = score;
-    }
+  async releaseSlot(slot) { delete this.db.slots[slot]; this.save(); }
+  async slotKeys() { return Object.keys(this.db.slots); }
+
+  async getRecit() { return Object.entries(this.db.recit); }
+  async setRecit(field, obj) {
+    if (obj) this.db.recit[field] = obj; else delete this.db.recit[field];
     this.save();
   }
-  async removeScores(id) {
-    for (const b of Object.keys(this.db.boards)) delete this.db.boards[b][id];
-    this.save();
-  }
-  sorted(board) {
-    const b = this.db.boards[board] || {};
-    return Object.keys(b).map((id) => [id, b[id]])
-      .sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1));
-  }
-  async top(board, n) { return this.sorted(board).slice(0, n).map(([id, score]) => ({ id, score })); }
-  async rankOf(board, id) {
-    const list = this.sorted(board);
-    const i = list.findIndex((x) => x[0] === id);
-    return i === -1 ? null : { rank: i + 1, score: list[i][1] };
-  }
+  async clearRecit() { this.db.recit = {}; this.save(); }
+
   async getSeen(id) { return this.db.seen[id] || []; }
   async addSeen(id, keys) {
     const list = (this.db.seen[id] || []).filter((k) => !keys.includes(k)).concat(keys);
@@ -128,42 +137,38 @@ class UpstashStore {
     const raw = await this.cmd('HGET', 'tb:users', id);
     return raw ? JSON.parse(raw) : null;
   }
-  async getUsers(ids) {
-    if (!ids.length) return [];
-    const raw = await this.cmd('HMGET', 'tb:users', ...ids);
-    return raw.map((r) => (r ? JSON.parse(r) : null));
+  async listUsers() {
+    return toPairs(await this.cmd('HGETALL', 'tb:users')).map(([id, raw]) => [id, JSON.parse(raw)]);
   }
   async createUser(id, rec) {
     return (await this.cmd('HSETNX', 'tb:users', id, JSON.stringify(rec))) === 1;
   }
   async putUser(id, rec) { await this.cmd('HSET', 'tb:users', id, JSON.stringify(rec)); }
-  async deleteUser(id) {
-    await this.removeScores(id);
-    await this.pipe([['HDEL', 'tb:users', id], ['DEL', 'tb:seen:' + id]]);
+  async putUsers(map) {
+    const ids = Object.keys(map);
+    const cmds = [];
+    for (let i = 0; i < ids.length; i += 100) {
+      const cmd = ['HSET', 'tb:users'];
+      for (const id of ids.slice(i, i + 100)) cmd.push(id, JSON.stringify(map[id]));
+      cmds.push(cmd);
+    }
+    await this.pipe(cmds);
   }
-  async submitScore(boards, id, score) {
-    await this.pipe(boards.flatMap((b) => [
-      ['ZADD', 'tb:lb:' + b, 'GT', score, id],
-      ['SADD', 'tb:boards', b]
-    ]));
+  async deleteUser(id) { await this.pipe([['HDEL', 'tb:users', id], ['DEL', 'tb:seen:' + id]]); }
+
+  async claimSlot(slot, id) { return (await this.cmd('HSETNX', 'tb:slots', slot, id)) === 1; }
+  async releaseSlot(slot) { await this.cmd('HDEL', 'tb:slots', slot); }
+  async slotKeys() { return (await this.cmd('HKEYS', 'tb:slots')) || []; }
+
+  async getRecit() {
+    return toPairs(await this.cmd('HGETALL', 'tb:recit')).map(([f, raw]) => [f, JSON.parse(raw)]);
   }
-  async removeScores(id) {
-    const boards = (await this.cmd('SMEMBERS', 'tb:boards')) || [];
-    await this.pipe(boards.map((b) => ['ZREM', 'tb:lb:' + b, id]));
+  async setRecit(field, obj) {
+    if (obj) await this.cmd('HSET', 'tb:recit', field, JSON.stringify(obj));
+    else await this.cmd('HDEL', 'tb:recit', field);
   }
-  async top(board, n) {
-    const flat = await this.cmd('ZRANGE', 'tb:lb:' + board, 0, n - 1, 'REV', 'WITHSCORES');
-    const out = [];
-    for (let i = 0; i < flat.length; i += 2) out.push({ id: flat[i], score: Number(flat[i + 1]) });
-    return out;
-  }
-  async rankOf(board, id) {
-    const [rank, score] = await this.pipe([
-      ['ZREVRANK', 'tb:lb:' + board, id],
-      ['ZSCORE', 'tb:lb:' + board, id]
-    ]);
-    return rank === null || rank === undefined ? null : { rank: Number(rank) + 1, score: Number(score) };
-  }
+  async clearRecit() { await this.cmd('DEL', 'tb:recit'); }
+
   async getSeen(id) { return (await this.cmd('ZRANGE', 'tb:seen:' + id, 0, -1)) || []; }
   async addSeen(id, keys) {
     if (!keys.length) return;

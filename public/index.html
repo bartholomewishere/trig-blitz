@@ -125,8 +125,16 @@ label { display: block; margin: 12px 0 4px; }
 .chip input:focus-visible + span { outline: 4px solid var(--hero); outline-offset: 2px; }
 .op span { font-family: var(--display); font-size: 1.6rem; line-height: 1.1; }
 
+/* sign-up: section, class number, group */
+select.field { appearance: auto; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.whotag { font-weight: 400; font-size: .95rem; }
+
 /* leaderboard */
-.board .tabs { margin-top: 30px; }
+.board .tabs { margin-top: 30px; flex-wrap: wrap; gap: 8px; border: 0; }
+.board .tabs button, .board .tabs button + button { flex: 1 1 auto; border: 3px solid var(--ink); font-size: 1.1rem; padding: 4px 10px; }
+.board .sub { display: block; font-weight: 400; font-size: .85rem; line-height: 1.2; }
+.board .note { margin: 14px 0 6px; }
 .board table { width: 100%; border-collapse: collapse; }
 .board td { padding: 7px 8px; border-bottom: 2px solid var(--ink); }
 .board tr:last-child td { border-bottom: 0; }
@@ -279,10 +287,25 @@ label { display: block; margin: 12px 0 4px; }
       <form id="auth-form" novalidate>
         <label for="username">Username</label>
         <input class="field" id="username" autocomplete="username" maxlength="16" required>
-        <p class="hint" id="name-hint" hidden>3 to 16 letters, numbers or underscores. It shows on the leaderboard.</p>
+        <p class="hint" id="name-hint" hidden>3 to 16 letters, numbers or underscores. It shows on the leaderboards, so use a name you're comfortable with.</p>
         <label for="password">Password</label>
         <input class="field" id="password" type="password" autocomplete="current-password" maxlength="72" required>
-        <p class="hint" id="pw-hint" hidden>At least 6 characters. If you forget it, a club officer can reset it.</p>
+        <p class="hint" id="pw-hint" hidden>At least 6 characters. If you forget it, your teacher can reset it.</p>
+        <div id="profile-fields" hidden>
+          <label for="section">Section</label>
+          <select class="field" id="section"></select>
+          <div id="class-fields" hidden>
+            <label for="tens">Class number</label>
+            <div class="pair">
+              <select class="field" id="tens" aria-label="Class number, tens digit"></select>
+              <select class="field" id="ones" aria-label="Class number, ones digit"></select>
+            </div>
+            <p class="hint" id="class-hint" hidden></p>
+            <label for="group">Group</label>
+            <select class="field" id="group"></select>
+          </div>
+          <p class="hint">Your section, class number and group are locked once you make the account. Only your teacher can change them.</p>
+        </div>
         <div class="error" id="auth-error" role="alert" hidden></div>
         <div class="form-actions"><button class="btn" id="auth-submit" type="submit">Sign in</button></div>
       </form>
@@ -297,6 +320,7 @@ label { display: block; margin: 12px 0 4px; }
       <h1 class="logo" style="font-size: clamp(3rem, 8vw, 4.6rem)">Trig Blitz!</h1>
       <div class="who">
         <span class="name" id="who-name"></span>
+        <span class="whotag" id="who-tag"></span>
         <button class="linkish" id="sign-out">Sign out</button>
       </div>
     </div>
@@ -357,11 +381,9 @@ label { display: block; margin: 12px 0 4px; }
       </div>
 
       <div class="panel board">
-        <div class="caption">Leaderboard</div>
-        <div class="tabs" role="tablist">
-          <button role="tab" id="lb-month" aria-selected="true">This month</button>
-          <button role="tab" id="lb-all" aria-selected="false">All time</button>
-        </div>
+        <div class="caption">Leaderboards</div>
+        <div class="tabs" id="lb-tabs" role="tablist"></div>
+        <p class="hint note" id="lb-note"></p>
         <div class="board-scroll"><table><tbody id="lb-body"></tbody></table></div>
       </div>
     </div>
@@ -419,7 +441,7 @@ const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 let token = null;
 try { token = localStorage.getItem('tb_token'); } catch (e) {}
-let me = null, config = null, lbPeriod = 'month', lastMode = null;
+let me = null, config = null, lbType = '', lastMode = null;
 
 /* ---------------------------------------------------------------- api */
 async function api(path, body) {
@@ -448,19 +470,78 @@ function setAuthMode(mode) {
   $('tab-login').setAttribute('aria-selected', mode === 'login');
   $('tab-register').setAttribute('aria-selected', mode === 'register');
   $('auth-submit').textContent = mode === 'login' ? 'Sign in' : 'Create account';
-  $('name-hint').hidden = $('pw-hint').hidden = mode === 'login';
+  $('name-hint').hidden = $('pw-hint').hidden = $('profile-fields').hidden = mode === 'login';
   $('password').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
   $('auth-error').hidden = true;
 }
 $('tab-login').onclick = () => setAuthMode('login');
 $('tab-register').onclick = () => setAuthMode('register');
+/* Section, class number and group are dropdowns only, so a made-up option can't be typed. */
+let takenClasses = new Set();
+function fillSelect(el, placeholder, options) {
+  el.replaceChildren();
+  const first = document.createElement('option'); first.value = ''; first.textContent = placeholder; el.append(first);
+  for (const [value, label] of options) { const o = document.createElement('option'); o.value = value; o.textContent = label; el.append(o); }
+}
+function buildProfileFields() {
+  fillSelect($('section'), 'Choose your section',
+    config.sections.map((s) => [s, s]).concat([[config.noSection, 'Not a student']]));
+  fillSelect($('tens'), 'Tens', [0, 1, 2, 3].map((n) => [String(n), String(n)]));
+  fillSelect($('ones'), 'Ones', Array.from({ length: 10 }, (_, n) => [String(n), String(n)]));
+  fillSelect($('group'), 'Choose your group', Array.from({ length: config.groups }, (_, i) => [String(i + 1), 'Group ' + (i + 1)]));
+}
+// Greys out class numbers that are taken in this section, and 00.
+function refreshClassOptions() {
+  const tens = $('tens').value;
+  let shown = 0;
+  for (const o of $('ones').options) {
+    if (!o.value) continue;
+    const n = Number(tens || 0) * 10 + Number(o.value);
+    const taken = tens !== '' && takenClasses.has(n);
+    o.disabled = tens !== '' && (n < 1 || n > config.maxClass || taken);
+    o.textContent = o.value + (taken ? ' (taken)' : '');
+    if (o.disabled && o.value === $('ones').value) $('ones').value = '';
+  }
+  const hint = $('class-hint');
+  const t = $('tens').value, o = $('ones').value;
+  hint.hidden = !(t !== '' && o !== '');
+  if (!hint.hidden) hint.textContent = 'You will be class ' + t + o + ' in ' + $('section').value + '.';
+}
+async function onSectionChange() {
+  const sec = $('section').value;
+  const student = sec && sec !== config.noSection;
+  $('class-fields').hidden = !student;
+  takenClasses = new Set();
+  $('tens').value = ''; $('ones').value = ''; $('group').value = '';
+  refreshClassOptions();
+  if (!student) return;
+  try {
+    const d = await api('/api/slots?section=' + encodeURIComponent(sec));
+    if ($('section').value !== sec) return;
+    takenClasses = new Set(d.taken);
+  } catch (e) { /* the server still refuses a taken seat, this only greys it out */ }
+  refreshClassOptions();
+}
+$('section').onchange = onSectionChange;
+$('tens').onchange = refreshClassOptions;
+$('ones').onchange = refreshClassOptions;
+
 $('auth-form').onsubmit = async (e) => {
   e.preventDefault();
   $('auth-error').hidden = true;
+  const payload = { username: $('username').value.trim(), password: $('password').value };
+  if (authMode === 'register') {
+    const sec = $('section').value;
+    const student = sec && sec !== config.noSection;
+    if (!sec || (student && ($('tens').value === '' || $('ones').value === '' || !$('group').value))) {
+      $('auth-error').textContent = 'Pick your section, class number and group first.'; $('auth-error').hidden = false; return;
+    }
+    payload.section = sec;
+    if (student) { payload.cls = Number($('tens').value) * 10 + Number($('ones').value); payload.group = Number($('group').value); }
+  }
   $('auth-submit').disabled = true;
   try {
-    const data = await api(authMode === 'login' ? '/api/login' : '/api/register',
-      { username: $('username').value.trim(), password: $('password').value });
+    const data = await api(authMode === 'login' ? '/api/login' : '/api/register', payload);
     saveToken(data.token); me = data.user; $('password').value = '';
     enterHub();
   } catch (err) {
@@ -473,54 +554,81 @@ $('sign-out').onclick = signOut;
 /* ----------------------------------------------------------------- hub */
 function renderMe() {
   $('who-name').textContent = me.name;
+  $('who-tag').textContent = me.section === config.noSection ? '' : me.section + ' \u00b7 class ' + String(me.cls).padStart(2, '0') + ' \u00b7 group ' + me.group;
   $('stat-best').textContent = me.best;
   $('stat-games').textContent = me.games;
   $('stat-solved').textContent = me.solvedTotal;
 }
-function enterHub() { renderMe(); show('hub'); loadBoard(); }
 
-function setBoard(period) {
-  lbPeriod = period;
-  $('lb-month').setAttribute('aria-selected', period === 'month');
-  $('lb-all').setAttribute('aria-selected', period === 'all');
+/* Students get five boards, accounts that aren't students only the all-time one.
+   The server enforces this too: asking for a board you may not see returns an error. */
+const BOARDS = {
+  all:      { label: 'All time', note: 'Everyone\u2019s best score.', empty: 'No scores yet. Play a ranked game to claim the top spot.' },
+  section:  { label: 'My Section', note: 'Best scores in your section.', empty: 'Nobody in your section has played yet. Yours could be first.' },
+  groups:   { label: 'My Groups', note: 'Groups in your section, by the average of each member\u2019s best score. Members who haven\u2019t played count as 0.', empty: 'No groups in your section yet.' },
+  showdown: { label: 'Section Showdown', note: 'Sections ranked by the average best score of all registered students. Members who haven\u2019t played count as 0.', empty: 'No section has a score yet.' },
+  recit:    { label: 'Recitation', note: 'How many times each student in your section has recited.', empty: 'No recitations have been recorded for your section yet.' }
+};
+function boardTypes() {
+  return me.section === config.noSection ? ['all'] : ['section', 'groups', 'showdown', 'recit', 'all'];
+}
+function buildTabs() {
+  const tabs = $('lb-tabs');
+  tabs.replaceChildren();
+  const types = boardTypes();
+  tabs.hidden = types.length < 2;
+  for (const t of types) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.setAttribute('role', 'tab'); b.dataset.type = t; b.textContent = BOARDS[t].label;
+    b.setAttribute('aria-selected', t === lbType);
+    b.onclick = () => setBoard(t);
+    tabs.append(b);
+  }
+}
+function enterHub() {
+  renderMe();
+  if (!boardTypes().includes(lbType)) lbType = boardTypes()[0];
+  buildTabs(); show('hub'); loadBoard();
+}
+function setBoard(type) {
+  lbType = type;
+  for (const b of $('lb-tabs').children) b.setAttribute('aria-selected', b.dataset.type === type);
   loadBoard();
 }
-$('lb-month').onclick = () => setBoard('month');
-$('lb-all').onclick = () => setBoard('all');
 
-function row(r, isMe) {
+function row(r) {
   const tr = document.createElement('tr');
-  if (isMe) tr.className = 'me';
+  if (r.mine) tr.className = 'me';
   const rank = document.createElement('td'); rank.className = 'rank';
   if (r.rank <= 3) { const m = document.createElement('span'); m.className = 'medal m' + r.rank; m.textContent = r.rank; rank.append(m); }
   else rank.textContent = r.rank;
-  const name = document.createElement('td'); name.textContent = r.name + (isMe ? ' (you)' : '');
-  const score = document.createElement('td'); score.className = 'score'; score.textContent = r.score;
+  const name = document.createElement('td');
+  name.append(document.createTextNode(r.label + (r.mine && lbType === 'all' ? ' (you)' : '')));
+  if (r.sub) { const sub = document.createElement('span'); sub.className = 'sub'; sub.textContent = r.sub; name.append(sub); }
+  const score = document.createElement('td'); score.className = 'score'; score.textContent = r.value;
   tr.append(rank, name, score);
   return tr;
 }
+function messageRow(text) {
+  const tr = document.createElement('tr'); const td = document.createElement('td');
+  td.className = 'empty'; td.colSpan = 3; td.textContent = text; tr.append(td); return tr;
+}
 async function loadBoard() {
-  const body = $('lb-body');
+  const body = $('lb-body'), type = lbType;
+  $('lb-note').textContent = BOARDS[type].note;
   try {
-    const data = await api('/api/leaderboard?period=' + lbPeriod);
-    if (data.period !== lbPeriod) return;
+    const data = await api('/api/board?type=' + type);
+    if (type !== lbType) return;
     body.replaceChildren();
-    if (!data.rows.length) {
-      const tr = document.createElement('tr'); const td = document.createElement('td');
-      td.className = 'empty'; td.colSpan = 3;
-      td.textContent = lbPeriod === 'month' ? 'Nobody has played this month yet. Your score could be first.' : 'No scores yet. Play a ranked game to claim the top spot.';
-      tr.append(td); body.append(tr); return;
-    }
-    const myId = me ? me.name.toLowerCase() : null;
-    for (const r of data.rows) body.append(row(r, r.id === myId));
-    if (data.me && !data.rows.some((r) => r.id === data.me.id)) {
+    if (!data.rows.length) { body.append(messageRow(BOARDS[type].empty)); return; }
+    for (const r of data.rows) body.append(row(r));
+    if (data.me) {
       const gap = document.createElement('tr'); gap.className = 'gap'; gap.innerHTML = '<td colspan="3"></td>';
-      body.append(gap, row(data.me, true));
+      body.append(gap, row(data.me));
     }
   } catch (err) {
-    body.replaceChildren();
-    const tr = document.createElement('tr'); const td = document.createElement('td');
-    td.className = 'empty'; td.colSpan = 3; td.textContent = err.message; tr.append(td); body.append(tr);
+    if (type !== lbType) return;
+    body.replaceChildren(); body.append(messageRow(err.message));
   }
 }
 
@@ -731,8 +839,7 @@ function showResults(game, result) {
     if (result.ok) {
       me = result.ok.user; renderMe();
       if (result.ok.newBest) { $('r-stamp').hidden = false; $('r-stamp').textContent = 'New personal best!'; }
-      else if (result.ok.newMonthBest) { $('r-stamp').hidden = false; $('r-stamp').textContent = 'Best this month!'; }
-      if (result.ok.monthRank) add('You are #' + result.ok.monthRank + ' on this month\u2019s board');
+      add('Your best score is ' + result.ok.user.best);
     } else {
       $('r-error').textContent = 'This score was not saved: ' + result.err.message;
       $('r-error').hidden = false;
@@ -773,8 +880,9 @@ $('r-hub').onclick = enterHub;
   try { config = await api('/api/config'); }
   catch (err) { document.body.innerHTML = '<div class="wrap"><div class="panel"><h2>Can\u2019t reach the server</h2><p>' + err.message + '</p></div></div>'; return; }
   if (token) {
-    try { const d = await api('/api/me'); me = d.user; enterHub(); return; } catch (e) { saveToken(null); }
+    try { const d = await api('/api/me'); me = d.user; buildProfileFields(); enterHub(); return; } catch (e) { saveToken(null); }
   }
+  buildProfileFields();
   show('auth'); setAuthMode('login'); $('username').focus();
 })();
 </script>

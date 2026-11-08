@@ -63,8 +63,8 @@ If you see only one folder called `trig-blitz`, or `index.html` sitting next to 
    |---|---|
    | `UPSTASH_REDIS_REST_URL` | the URL from Step 1 |
    | `UPSTASH_REDIS_REST_TOKEN` | the token from Step 1 |
-   | `ADMIN_KEY` | a long password only club officers know (optional; turns on `/admin.html`) |
-   | `TIMEZONE` | optional, like `Asia/Singapore`. It decides when the monthly leaderboard resets. The default is `Asia/Manila`. |
+   | `ADMIN_KEY` | a long password only you know. **Needed for the teacher tools** at `/admin.html` |
+   | `TIMEZONE` | optional, like `Asia/Singapore`. It decides what "today" is on the Recitation page. The default is `Asia/Manila`. |
 
 5. Click **Create Web Service**. Render builds it, which takes a few minutes. When the page says **Live**, your link is at the top of the page.
 
@@ -78,10 +78,10 @@ If you see only one folder called `trig-blitz`, or `index.html` sitting next to 
    ```
 
    If it says `Storage: local file` with a warning, the two Upstash variables are missing or misspelled. Fix them under **Environment**, and Render redeploys by itself.
-2. Open your `.onrender.com` link, create a test account and play a practice game, then a ranked one. Your score should appear on the leaderboard.
+2. Open your `.onrender.com` link, create a test account and play a practice game, then a ranked one. Your score should appear on the leaderboards (the boards refresh every 15 seconds).
 3. In Render, use **Manual Deploy → Restart service**, then reload the site and sign in again. The account and score should still be there. That proves the database is working.
 
-**Done.** Send the link to your club.
+**Done.** Send the link to your students.
 
 ---
 
@@ -89,10 +89,14 @@ If you see only one folder called `trig-blitz`, or `index.html` sitting next to 
 
 - **The first visit can be slow.** A free Render service falls asleep after **15 minutes** without visitors, and waking it takes about **a minute**. Open the site yourself a few minutes before an event. If the game shows "Can't reach the server", wait a minute and reload.
 - **Free hours.** Render gives each account **750 free instance hours a month**. That covers one service running all month, and a sleeping service doesn't use hours. Math Blitz and Trig Blitz together are fine because they sleep when nobody plays.
-- **Upstash limits.** The free plan includes **500,000 commands a month** and **one database**. A game plus a leaderboard refresh uses a couple dozen commands, which is far more headroom than a club needs.
+- **Upstash limits.** The free plan includes **500,000 commands a month** and **one database**. A game uses about 8 commands, and the leaderboards are worked out once every 15 seconds no matter how many students look, so 100 students over 4 days stays far below the limit.
 - **Updating the game.** Change a file on GitHub (open it, click the pencil icon, then **Commit changes**) or upload new files. Render redeploys automatically. Accounts and scores live in Upstash, so they survive every update.
-- **Admin tools.** With `ADMIN_KEY` set, open `your-link/admin.html` to reset a player's password, remove someone from the leaderboards, or delete an account.
-- **A fresh start.** The monthly board resets by itself. To wipe everything, delete the Upstash database, create a new one, and update the two variables on Render.
+- **Teacher tools.** With `ADMIN_KEY` set, open `your-link/admin.html` to see every section's boards, edit or delete profiles, reset passwords, enter recitation and download CSV records.
+- **Before the event.** Open the admin page, go to **Tools** and press **Reset all scores** to wipe test scores. Delete any test accounts under **Profiles**.
+- **School Wi-Fi.** A whole class shares one public address. Wrong passwords are counted per account, so a few typos won't lock anyone else out.
+- **Sign-in rush.** If 100 students sign in at the very same minute, the last few may wait a few seconds on the free tier. Letting classes start a few minutes apart helps. Signing in is only needed once per device, because logins last 30 days.
+- **Keep it awake.** Open the site yourself 5 minutes before each class, or use a free uptime pinger on `your-link/healthz` during the event.
+- **A fresh start.** To wipe everything, delete the Upstash database, create a new one, and update the two variables on Render.
 
 ## If something goes wrong
 

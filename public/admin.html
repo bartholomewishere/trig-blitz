@@ -6,58 +6,315 @@
 <title>Trig Blitz admin</title>
 <link href="https://fonts.googleapis.com/css2?family=Bangers&family=Comic+Neue:wght@400;700&display=swap" rel="stylesheet">
 <style>
-  body { margin: 0; font-family: 'Comic Neue', 'Comic Sans MS', sans-serif; font-weight: 700; background: #ffd400; color: #000; }
-  .wrap { max-width: 520px; margin: 0 auto; padding: 40px 16px; }
-  h1 { font-family: 'Bangers', Impact, sans-serif; font-weight: 400; font-size: 3rem; margin: 0 0 20px; letter-spacing: .03em; }
-  .panel { background: #fffdf6; border: 4px solid #000; box-shadow: 8px 8px 0 #000; padding: 22px; }
-  label { display: block; margin: 14px 0 4px; }
-  input, select { width: 100%; font: inherit; border: 4px solid #000; padding: 8px 10px; background: #fff; }
-  button { margin-top: 20px; font-family: 'Bangers', Impact, sans-serif; font-size: 1.5rem; letter-spacing: .05em; background: #e4002b; color: #fff; border: 4px solid #000; box-shadow: 5px 5px 0 #000; padding: 6px 20px; cursor: pointer; }
-  .msg { margin-top: 16px; border: 3px solid #000; padding: 8px 12px; }
-  .ok { background: #c6f2d7; } .bad { background: #e4002b; color: #fff; }
-  p { font-weight: 400; }
+  :root { --ink: #000; --paper: #fffdf6; --sun: #ffd400; --hero: #e4002b; --sky: #1f6feb; --leaf: #13a35a; box-sizing: border-box; }
+  *, *::before, *::after { box-sizing: inherit; }
+  body { margin: 0; font-family: 'Comic Neue', 'Comic Sans MS', sans-serif; font-weight: 700; background: var(--sun); color: var(--ink); }
+  [hidden] { display: none !important; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 28px 16px 60px; }
+  h1 { font-family: 'Bangers', Impact, sans-serif; font-weight: 400; font-size: 3rem; margin: 0 0 16px; letter-spacing: .03em; }
+  h2 { font-family: 'Bangers', Impact, sans-serif; font-weight: 400; font-size: 1.8rem; margin: 22px 0 8px; letter-spacing: .03em; }
+  .panel { background: var(--paper); border: 4px solid var(--ink); box-shadow: 8px 8px 0 var(--ink); padding: 20px; margin-bottom: 26px; }
+  label { display: block; margin: 12px 0 4px; }
+  input, select { font: inherit; border: 3px solid var(--ink); padding: 6px 8px; background: #fff; max-width: 100%; }
+  button { font-family: 'Bangers', Impact, sans-serif; font-size: 1.15rem; letter-spacing: .05em; background: var(--hero); color: #fff; border: 3px solid var(--ink); box-shadow: 3px 3px 0 var(--ink); padding: 3px 12px; cursor: pointer; }
+  button:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--ink); }
+  button.alt { background: var(--paper); color: var(--ink); }
+  button.blue { background: var(--sky); }
+  button.small { font-size: 1rem; padding: 1px 9px; margin-right: 4px; }
+  :focus-visible { outline: 4px solid var(--sky); outline-offset: 2px; }
+  p, .hint { font-weight: 400; }
+  .nav { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 26px; }
+  .nav button[aria-selected="true"] { background: var(--sky); }
+  .msg { position: sticky; top: 8px; z-index: 5; margin-bottom: 18px; border: 3px solid var(--ink); padding: 8px 12px; }
+  .ok { background: #c6f2d7; } .bad { background: var(--hero); color: #fff; }
+  table { width: 100%; border-collapse: collapse; background: #fff; }
+  th, td { border: 2px solid var(--ink); padding: 5px 8px; text-align: left; vertical-align: middle; }
+  th { background: var(--sun); font-family: 'Bangers', Impact, sans-serif; font-weight: 400; letter-spacing: .04em; }
+  td.num, th.num { text-align: right; }
+  tr.empty td { color: #666; font-weight: 400; background: #f4f1e6; }
+  .scroll { overflow-x: auto; }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; align-items: start; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+  .editor td { background: #fff7c2; }
+  .editor .row { align-items: end; }
+  .rc { width: 4.2em; text-align: center; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 14px; }
+  .cell { border: 3px solid var(--ink); background: #fff; padding: 6px 8px; }
+  .cell.dim { background: #f4f1e6; }
+  .cell b { font-family: 'Bangers', Impact, sans-serif; font-weight: 400; font-size: 1.2rem; }
+  .cell small { display: block; font-weight: 400; min-height: 1.2em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cell input { width: 100%; margin-top: 4px; }
+  .danger { background: #ffe3e7; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Club officer tools</h1>
-  <div class="panel">
-    <p>Needs the ADMIN_KEY set on the server. Every action applies to one player.</p>
-    <form id="f">
-      <label for="key">Admin key</label>
-      <input id="key" type="password" autocomplete="off" required>
-      <label for="user">Player's username</label>
-      <input id="user" required>
-      <label for="action">What to do</label>
-      <select id="action">
-        <option value="reset-password">Reset their password</option>
-        <option value="remove-scores">Remove them from every leaderboard</option>
-        <option value="delete-user">Delete their account</option>
-      </select>
-      <div id="pw-wrap">
-        <label for="pw">New password</label>
-        <input id="pw" autocomplete="off">
-      </div>
-      <button type="submit" id="go">Reset password</button>
-      <div id="msg" class="msg" role="alert" hidden></div>
+  <h1>Teacher tools</h1>
+
+  <div class="panel" id="login">
+    <p>Enter the <b>ADMIN_KEY</b> you set on the server.</p>
+    <form id="login-form" class="row">
+      <div><label for="key">Admin key</label><input id="key" type="password" autocomplete="off" required></div>
+      <button type="submit">Open</button>
     </form>
   </div>
+
+  <div id="app" hidden>
+    <div class="msg" id="msg" role="alert" hidden></div>
+    <div class="nav" role="tablist" id="nav">
+      <button role="tab" data-tab="boards" aria-selected="true">Leaderboards</button>
+      <button role="tab" data-tab="profiles" aria-selected="false">Profiles</button>
+      <button role="tab" data-tab="recit" aria-selected="false">Recitation</button>
+      <button role="tab" data-tab="tools" aria-selected="false">Tools</button>
+      <button class="alt" id="lock" style="margin-left:auto">Lock</button>
+    </div>
+
+    <!-- ============ LEADERBOARDS ============ -->
+    <section id="tab-boards">
+      <div class="panel">
+        <div class="row"><h2 style="margin:0">Section Showdown</h2><button class="alt small" id="refresh-boards">Refresh</button></div>
+        <p class="hint">Average of each registered student&rsquo;s best score. Students who haven&rsquo;t played count as 0. Students only see sections that have a score.</p>
+        <div class="scroll"><table><thead><tr><th>#</th><th>Section</th><th class="num">Average</th><th class="num">Total</th><th class="num">Played / registered</th></tr></thead><tbody id="showdown"></tbody></table></div>
+      </div>
+      <div class="panel">
+        <div class="row"><div><label for="board-section">Section</label><select id="board-section"></select></div></div>
+        <div class="cols">
+          <div><h2>Students</h2><div class="scroll"><table><thead><tr><th>#</th><th>Username</th><th>Class</th><th>Group</th><th class="num">Best</th></tr></thead><tbody id="b-students"></tbody></table></div></div>
+          <div><h2>Groups</h2><div class="scroll"><table><thead><tr><th>#</th><th>Group</th><th class="num">Average</th><th class="num">Total</th><th class="num">Played</th></tr></thead><tbody id="b-groups"></tbody></table></div></div>
+          <div><h2>Recitation</h2><div class="scroll"><table><thead><tr><th>#</th><th>Username</th><th>Class</th><th class="num">Times</th></tr></thead><tbody id="b-recit"></tbody></table></div><p class="hint" id="b-recit-extra"></p></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2 style="margin-top:0">All time (top 50)</h2>
+        <div class="scroll"><table><thead><tr><th>#</th><th>Username</th><th>Section</th><th>Class</th><th class="num">Best</th></tr></thead><tbody id="b-all"></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- ============ PROFILES ============ -->
+    <section id="tab-profiles" hidden>
+      <div class="panel">
+        <div class="row"><div><label for="prof-section">Section</label><select id="prof-section"></select></div><button class="alt small" id="prof-refresh">Refresh</button></div>
+        <p class="hint">Every class number is listed, taken or not. Only you can change a student&rsquo;s section, class number or group.</p>
+        <div class="scroll"><table><thead><tr><th>Class</th><th>Username</th><th>Group</th><th class="num">Best</th><th class="num">Games</th><th>Actions</th></tr></thead><tbody id="prof-body"></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- ============ RECITATION ============ -->
+    <section id="tab-recit" hidden>
+      <div class="panel">
+        <div class="row">
+          <div><label for="rc-section">Section</label><select id="rc-section"></select></div>
+          <div><label for="rc-date">Day</label><input id="rc-date" type="date"></div>
+          <button id="rc-save">Save this day</button>
+        </div>
+        <p class="hint">Type how many times each class number recited that day. Saving replaces that day&rsquo;s numbers for this section, so you can fix a mistake by saving again. Leave a box empty for zero.</p>
+        <div class="grid" id="rc-grid"></div>
+      </div>
+    </section>
+
+    <!-- ============ TOOLS ============ -->
+    <section id="tab-tools" hidden>
+      <div class="panel">
+        <h2 style="margin-top:0">Download a record</h2>
+        <p>Spreadsheet files (CSV) you can open in Excel or Google Sheets. Passwords are never included.</p>
+        <button class="blue" id="ex-profiles">Profiles and scores</button>
+        <button class="blue" id="ex-recit">Recitation by day</button>
+      </div>
+      <div class="panel danger">
+        <h2 style="margin-top:0">Before the event</h2>
+        <p><b>Reset all scores</b> sets every account&rsquo;s best score, games and solved count back to zero. Accounts, passwords and class numbers are kept.</p>
+        <button id="reset-all">Reset all scores</button>
+        <p><b>Clear recitation</b> deletes every recitation count for every section and day.</p>
+        <button id="clear-recit">Clear recitation</button>
+      </div>
+    </section>
+  </div>
 </div>
+
 <script>
-  const $ = (id) => document.getElementById(id);
-  const LABELS = { 'reset-password': 'Reset password', 'remove-scores': 'Remove scores', 'delete-user': 'Delete account' };
-  $('action').onchange = () => { $('pw-wrap').hidden = $('action').value !== 'reset-password'; $('go').textContent = LABELS[$('action').value]; };
-  $('f').onsubmit = async (e) => {
-    e.preventDefault();
-    const action = $('action').value;
-    if (action === 'delete-user' && !confirm('Delete ' + $('user').value + ' for good?')) return;
-    const res = await fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: $('key').value, username: $('user').value, action, newPassword: $('pw').value }) });
-    const data = await res.json().catch(() => ({}));
-    $('msg').hidden = false;
-    $('msg').className = 'msg ' + (res.ok ? 'ok' : 'bad');
-    $('msg').textContent = res.ok ? data.message : (data.error || 'Request failed (' + res.status + ').');
-  };
+'use strict';
+const $ = (id) => document.getElementById(id);
+const NONE = 'none';
+const SECTIONS = ['Aristotle', 'Confucius', 'Lao Tzu', 'Plato', 'Socrates'];
+const MAX_CLASS = 39, GROUPS = 6;
+const pad = (n) => String(n).padStart(2, '0');
+let KEY = '';
+try { KEY = sessionStorage.getItem('tb_admin') || ''; } catch (e) {}
+
+function h(tag, props, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (k === 'class') el.className = v; else if (k.startsWith('on')) el[k] = v; else if (v !== false && v != null) el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const kid of kids.flat()) if (kid != null) el.append(kid.nodeType ? kid : document.createTextNode(kid));
+  return el;
+}
+function say(text, ok) {
+  const m = $('msg'); m.hidden = false; m.className = 'msg ' + (ok ? 'ok' : 'bad'); m.textContent = text;
+  m.scrollIntoView({ block: 'nearest' });
+}
+async function call(action, extra) {
+  const res = await fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: KEY, action, ...extra }) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Request failed (' + res.status + ').');
+  return data;
+}
+async function run(fn) { try { await fn(); } catch (e) { say(e.message, false); } }
+function options(sel, list, placeholder) {
+  sel.replaceChildren();
+  for (const [v, t] of list) sel.append(h('option', { value: v }, t));
+}
+const sectionList = (withNone) => SECTIONS.map((s) => [s, s]).concat(withNone ? [[NONE, 'Not a student']] : []);
+
+/* ------------------------------------------------------------- sign in */
+$('login-form').onsubmit = (e) => {
+  e.preventDefault(); KEY = $('key').value;
+  run(async () => { await loadBoards(); try { sessionStorage.setItem('tb_admin', KEY); } catch (x) {} open(); });
+};
+function open() { $('login').hidden = true; $('app').hidden = false; }
+$('lock').onclick = () => { KEY = ''; try { sessionStorage.removeItem('tb_admin'); } catch (e) {} location.reload(); };
+$('nav').onclick = (e) => {
+  const b = e.target.closest('button[data-tab]'); if (!b) return;
+  for (const t of $('nav').querySelectorAll('button[data-tab]')) {
+    t.setAttribute('aria-selected', t === b); $('tab-' + t.dataset.tab).hidden = t !== b;
+  }
+  if (b.dataset.tab === 'boards') run(loadBoards);
+  if (b.dataset.tab === 'profiles') run(loadProfiles);
+  if (b.dataset.tab === 'recit') run(loadRecit);
+};
+
+/* ---------------------------------------------------------- leaderboards */
+let overview = null;
+const td = (v, cls) => h('td', cls ? { class: cls } : {}, v);
+async function loadBoards() {
+  overview = await call('overview');
+  if (!$('rc-date').value) $('rc-date').value = overview.today;
+  $('showdown').replaceChildren(...overview.showdown.map((r) => h('tr', {}, td(r.rank || '\u2013'), td(r.name), td(r.rank ? r.avg : '\u2013', 'num'), td(r.total, 'num'), td(r.played + ' / ' + r.registered, 'num'))));
+  $('b-all').replaceChildren(...(overview.all.length ? overview.all.map((r) => h('tr', {}, td(r.rank), td(r.name), td(r.section === NONE ? 'not a student' : r.section), td(r.section === NONE ? '' : pad(r.cls)), td(r.score, 'num')))
+    : [h('tr', { class: 'empty' }, h('td', { colspan: 5 }, 'No scores yet.'))]));
+  renderSection();
+}
+function renderSection() {
+  if (!overview) return;
+  const S = overview.sections.find((x) => x.name === $('board-section').value) || overview.sections[0];
+  const none = (cols, text) => [h('tr', { class: 'empty' }, h('td', { colspan: cols }, text))];
+  $('b-students').replaceChildren(...(S.students.length ? S.students.map((r) => h('tr', {}, td(r.rank), td(r.name), td(pad(r.cls)), td(r.group), td(r.score, 'num'))) : none(5, 'Nobody has played yet.')));
+  $('b-groups').replaceChildren(...(S.groups.length ? S.groups.map((r) => h('tr', {}, td(r.rank), td('Group ' + r.group), td(r.avg, 'num'), td(r.total, 'num'), td(r.played + ' / ' + r.registered, 'num'))) : none(5, 'No students registered.')));
+  $('b-recit').replaceChildren(...(S.recit.length ? S.recit.map((r) => h('tr', {}, td(r.rank), td(r.name), td(pad(r.cls)), td(r.count, 'num'))) : none(4, 'No recitations yet.')));
+  $('b-recit-extra').textContent = S.recitUnregistered.length ? 'Counted for class numbers with no account yet: ' + S.recitUnregistered.map((r) => pad(r.cls) + ' (' + r.count + ')').join(', ') + '.' : '';
+}
+$('board-section').onchange = renderSection;
+$('refresh-boards').onclick = () => run(loadBoards);
+
+/* -------------------------------------------------------------- profiles */
+async function takenIn(section) {
+  if (section === NONE) return new Set();
+  const r = await fetch('/api/slots?section=' + encodeURIComponent(section));
+  return new Set((await r.json()).taken || []);
+}
+async function loadProfiles() {
+  const section = $('prof-section').value;
+  const data = await call('list-section', { section });
+  const rows = [];
+  for (const r of data.rows) {
+    if (r.empty) { rows.push(h('tr', { class: 'empty' }, td(pad(r.cls)), h('td', { colspan: 5 }, 'no account'))); continue; }
+    const tr = h('tr', {}, td(r.cls ? pad(r.cls) : '\u2013'), td(r.username), td(r.group || '\u2013'), td(r.best, 'num'), td(r.games, 'num'), h('td', {},
+      h('button', { class: 'small alt', onclick: () => toggleEditor(tr, r, section) }, 'Edit'),
+      h('button', { class: 'small blue', onclick: () => resetPassword(r) }, 'Reset password'),
+      h('button', { class: 'small alt', onclick: () => resetScores(r) }, 'Zero score'),
+      h('button', { class: 'small', onclick: () => deleteProfile(r) }, 'Delete')));
+    rows.push(tr);
+  }
+  $('prof-body').replaceChildren(...rows);
+}
+function resetPassword(r) {
+  const pw = prompt('New password for ' + r.username + ' (at least 6 characters):');
+  if (pw === null) return;
+  run(async () => { say((await call('reset-password', { username: r.username, newPassword: pw })).message, true); });
+}
+function resetScores(r) {
+  if (!confirm('Set ' + r.username + '\u2019s scores back to zero?')) return;
+  run(async () => { say((await call('remove-scores', { username: r.username })).message, true); await loadProfiles(); });
+}
+function deleteProfile(r) {
+  if (!confirm('Delete ' + r.username + ' for good? Their class number becomes free again.')) return;
+  run(async () => { say((await call('delete-user', { username: r.username })).message, true); await loadProfiles(); });
+}
+async function toggleEditor(tr, r, currentSection) {
+  if (tr.nextSibling && tr.nextSibling.classList.contains('editor')) { tr.nextSibling.remove(); return; }
+  const sec = h('select', {}), cls = h('select', {}), grp = h('select', {});
+  options(sec, sectionList(true)); sec.value = currentSection;
+  options(grp, Array.from({ length: GROUPS }, (_, i) => [String(i + 1), 'Group ' + (i + 1)])); grp.value = String(r.group || 1);
+  const classWrap = h('div', {}, h('label', {}, 'Class number', cls)), groupWrap = h('div', {}, h('label', {}, 'Group', grp));
+  async function fillClasses() {
+    const isStudent = sec.value !== NONE;
+    classWrap.hidden = groupWrap.hidden = !isStudent;
+    if (!isStudent) return;
+    const taken = await takenIn(sec.value);
+    cls.replaceChildren();
+    for (let c = 1; c <= MAX_CLASS; c++) {
+      const mine = sec.value === currentSection && c === r.cls;
+      cls.append(h('option', { value: String(c), disabled: taken.has(c) && !mine }, pad(c) + (taken.has(c) && !mine ? ' (taken)' : '')));
+    }
+    cls.value = sec.value === currentSection && r.cls ? String(r.cls) : (cls.querySelector('option:not([disabled])') || {}).value;
+  }
+  sec.onchange = () => run(fillClasses);
+  await fillClasses();
+  const save = h('button', { class: 'small', onclick: () => run(async () => {
+    const m = await call('update-profile', { username: r.username, section: sec.value, cls: Number(cls.value || 0), group: Number(grp.value) });
+    say(m.message, true); await loadProfiles();
+  }) }, 'Save');
+  const cancel = h('button', { class: 'small alt', onclick: () => ed.remove() }, 'Cancel');
+  const ed = h('tr', { class: 'editor' }, h('td', { colspan: 6 }, h('div', { class: 'row' }, h('div', {}, h('label', {}, 'Section', sec)), classWrap, groupWrap, h('div', {}, save, cancel))));
+  tr.after(ed);
+}
+$('prof-refresh').onclick = () => run(loadProfiles);
+$('prof-section').onchange = () => run(loadProfiles);
+
+/* ------------------------------------------------------------ recitation */
+let rcNames = {};
+async function loadRecit() {
+  const section = $('rc-section').value, date = $('rc-date').value;
+  if (!date) return;
+  const [rec, list] = await Promise.all([call('get-recitation', { section, date }), call('list-section', { section })]);
+  rcNames = {}; for (const r of list.rows) if (!r.empty) rcNames[r.cls] = r.username;
+  const cells = [];
+  for (let c = 1; c <= MAX_CLASS; c++) {
+    const input = h('input', { type: 'number', min: '0', max: '99', step: '1', inputmode: 'numeric', 'data-cls': c, 'aria-label': 'Recitations for class ' + pad(c) });
+    if (rec.counts[c]) input.value = rec.counts[c];
+    cells.push(h('div', { class: 'cell' + (rcNames[c] ? '' : ' dim') }, h('b', {}, pad(c)), h('small', {}, rcNames[c] || 'no account'), input));
+  }
+  $('rc-grid').replaceChildren(...cells);
+}
+$('rc-section').onchange = () => run(loadRecit);
+$('rc-date').onchange = () => run(loadRecit);
+$('rc-save').onclick = () => run(async () => {
+  const counts = {};
+  for (const i of $('rc-grid').querySelectorAll('input')) { const n = Number(i.value || 0); if (!Number.isInteger(n) || n < 0 || n > 99) throw new Error('Class ' + pad(i.dataset.cls) + ': use a whole number from 0 to 99.'); if (n > 0) counts[i.dataset.cls] = n; }
+  say((await call('set-recitation', { section: $('rc-section').value, date: $('rc-date').value, counts })).message, true);
+});
+
+/* ----------------------------------------------------------------- tools */
+function download(name, text) {
+  const a = h('a', { href: URL.createObjectURL(new Blob(['\ufeff' + text], { type: 'text/csv;charset=utf-8' })), download: name });
+  document.body.append(a); a.click(); a.remove();
+}
+$('ex-profiles').onclick = () => run(async () => { const d = await call('export', { what: 'profiles' }); download(d.filename, d.csv); });
+$('ex-recit').onclick = () => run(async () => { const d = await call('export', { what: 'recitation' }); download(d.filename, d.csv); });
+$('reset-all').onclick = () => {
+  if (prompt('This sets EVERY score back to zero. Type RESET to continue.') !== 'RESET') return;
+  run(async () => { say((await call('reset-all-scores')).message, true); });
+};
+$('clear-recit').onclick = () => {
+  if (prompt('This deletes EVERY recitation count. Type CLEAR to continue.') !== 'CLEAR') return;
+  run(async () => { say((await call('clear-recitation')).message, true); });
+};
+
+/* ------------------------------------------------------------------ boot */
+options($('board-section'), sectionList(false));
+options($('prof-section'), sectionList(true));
+options($('rc-section'), sectionList(false));
+if (KEY) run(async () => { await loadBoards(); open(); }).then(() => { if ($('app').hidden) KEY = ''; });
 </script>
 </body>
 </html>
