@@ -36,6 +36,7 @@ const TOKEN_TTL_MS = 30 * 24 * 3600 * 1000;
 
 const store = createStore();
 let SECRET = '';
+let dbError = 'starting up';
 
 /* ---------------------------------------------------------------- helpers */
 function send(res, status, obj) {
@@ -166,6 +167,12 @@ function scoreGame(session, answers, serverElapsed) {
 async function api(req, res, url) {
   const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
   const route = req.method + ' ' + url.pathname;
+
+  // Visit /api/status in a browser to see whether the database is connected.
+  if (route === 'GET /api/status') return send(res, 200, { db: SECRET ? 'ok' : 'not connected', storage: store.kind, error: SECRET ? '' : dbError });
+  if (!SECRET && route !== 'GET /api/config') {
+    return send(res, 503, { error: 'The game database is not answering yet (' + dbError + '). Wait a minute and try again.' });
+  }
 
   if (route === 'GET /api/config') {
     return send(res, 200, { gameMs: GAME_MS, countdownMs: COUNTDOWN_MS, skipPenaltyMs: SKIP_PENALTY_MS,
@@ -324,8 +331,24 @@ const server = http.createServer(async (req, res) => {
   serveStatic(req, res, url);
 });
 
-async function main() {
-  SECRET = await store.getSecret(crypto.randomBytes(32).toString('hex'));
+// Keep trying until the database answers. The web server is already open by then,
+// so visitors see a clear message instead of a page that never loads.
+async function connectDb() {
+  for (;;) {
+    try {
+      SECRET = await store.getSecret(crypto.randomBytes(32).toString('hex'));
+      dbError = '';
+      console.log('  Database connected (' + store.kind + ').');
+      return;
+    } catch (e) {
+      dbError = e.message;
+      console.error('  Database is not reachable: ' + e.message + ' (retrying in 5 s)');
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+  }
+}
+
+function main() {
   server.listen(PORT, '0.0.0.0', () => {
     console.log('\n  TRIG BLITZ is running!\n');
     console.log('  This computer:   http://localhost:' + PORT);
@@ -340,6 +363,7 @@ async function main() {
       console.log('  lost. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (see RENDER-DEPLOY.md).');
     }
     console.log('  Admin page: ' + (ADMIN_KEY ? '/admin.html' : 'off (set ADMIN_KEY to turn it on)') + '\n');
+    connectDb();
   });
 }
 function shutdown() { if (store.flushSync) store.flushSync(); process.exit(0); }

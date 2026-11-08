@@ -94,11 +94,18 @@ class UpstashStore {
     this.token = token;
   }
   async req(pathPart, body) {
-    const res = await fetch(this.url + pathPart, {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + this.token, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
+    let res;
+    try {
+      res = await fetch(this.url + pathPart, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + this.token, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(8000)
+      });
+    } catch (e) {
+      if (e && e.name === 'TimeoutError') throw new Error('Upstash did not answer within 8 seconds');
+      throw new Error('Could not reach Upstash at ' + this.url + ' (' + ((e.cause && e.cause.code) || e.message) + ')');
+    }
     const data = await res.json().catch(() => null);
     if (!res.ok || !data) throw new Error('Upstash request failed (' + res.status + '): ' + JSON.stringify(data));
     return data;
@@ -167,9 +174,12 @@ class UpstashStore {
   }
 }
 
+// Be forgiving about how the values were pasted: stray quotes, spaces, a missing https://
+function cleanEnv(v) { return String(v || '').trim().replace(/^["']+|["']+$/g, '').trim(); }
 function createStore() {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  let url = cleanEnv(process.env.UPSTASH_REDIS_REST_URL);
+  const token = cleanEnv(process.env.UPSTASH_REDIS_REST_TOKEN);
+  if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
   if (url && token) return new UpstashStore(url, token);
   return new FileStore(process.env.DATA_DIR || path.join(__dirname, 'data'));
 }
