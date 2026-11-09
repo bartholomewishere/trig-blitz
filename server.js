@@ -112,6 +112,7 @@ async function authUser(req) {
   const user = await store.getUser(id);
   // Changing a password (e.g. an admin reset) logs out old sessions.
   if (!user || String(user.pwv || 0) !== pwv) return null;
+  if (user.locked) return null; // a locked account is signed out immediately
   return { id, user };
 }
 
@@ -234,9 +235,10 @@ async function buildSnapshot() {
   }
   const everyone = [];
   for (const [id, u] of pairs) {
+    if (u.locked) continue; // locked accounts are hidden from every board
     const p = profileOf(u);
     const best = u.best || 0;
-    const played = (u.games || 0) > 0;
+    const played = (u.games || 0) > 0 || best > 0; // an edited score counts even with no games
     const row = { id, name: u.name || id, section: p.section, cls: p.cls, group: p.group, best, games: u.games || 0, played };
     if (played) everyone.push(row);
     if (p.section === NO_SECTION) continue;
@@ -339,6 +341,7 @@ function csvCell(v) {
 }
 function csv(rows) { return rows.map((r) => r.map(csvCell).join(',')).join('\r\n') + '\r\n'; }
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const adminLog = []; // recent admin changes, newest last
 
 async function adminAction(body) {
   const A = body.action;
@@ -370,7 +373,8 @@ async function adminAction(body) {
     const section = body.section;
     if (section !== NO_SECTION && !SECTIONS.includes(section)) return fail(400, 'Unknown section.');
     const users = (await store.listUsers()).map(([uid, u]) => ({ uid, u, p: profileOf(u) })).filter((x) => x.p.section === section);
-    const mk = (x) => ({ cls: x.p.cls, username: x.u.name, group: x.p.group, best: x.u.best || 0, games: x.u.games || 0, created: x.u.created || 0 });
+    const mk = (x) => ({ cls: x.p.cls, section: x.p.section, username: x.u.name, group: x.p.group, best: x.u.best || 0, games: x.u.games || 0,
+      created: x.u.created || 0, locked: !!x.u.locked, adjusted: x.u.adjusted || null });
     if (section === NO_SECTION) {
       return ok({ section, rows: users.map(mk).sort((a, b) => a.username.localeCompare(b.username)) });
     }
@@ -391,7 +395,7 @@ async function adminAction(body) {
   }
   if (A === 'remove-scores') {
     const user = await needUser(); if (!user) return fail(404, 'No player named "' + body.username + '".');
-    user.best = 0; user.games = 0; user.solvedTotal = 0;
+    user.best = 0; user.games = 0; user.solvedTotal = 0; delete user.adjusted;
     await store.putUser(id, user); invalidateSnapshot();
     return ok({ ok: true, message: user.name + '\u2019s scores were reset to zero.' });
   }
@@ -418,10 +422,80 @@ async function adminAction(body) {
     invalidateSnapshot();
     return ok({ ok: true, message: user.name + ' is now ' + (np.section === NO_SECTION ? 'a non-student account' : describeSlot(np) + ', group ' + np.group) + '.' });
   }
+  // Changes a student's best score directly (for a mistake, a bonus or a penalty).
+  if (A === 'set-score') {
+    const user = await needUser(); if (!user) return fail(404, 'No player named "' + body.username + '".');
+    const n = Number(body.best);
+    if (!Number.isInteger(n) || n < 0 || n > 9999) return fail(400, 'The score must be a whole number from 0 to 9999.');
+    const from = user.best || 0;
+    user.best = n;
+    user.adjusted = { from, to: n, at: Date.now() }; // so you can see later that this score was edited
+    await store.putUser(id, user); invalidateSnapshot();
+    return ok({ ok: true, message: user.name + '’s best score changed from ' + from + ' to ' + n + '. A later game only replaces it if it scores higher.' });
+  }
+  if (A === 'rename-user') {
+    const user = await needUser(); if (!user) return fail(404, 'No player named "' + body.username + '".');
+    const newName = String(body.newName || '').trim();
+    if (!validName(newName)) return fail(400, 'Usernames are 3 to 16 letters, numbers or underscores.');
+    const newId = newName.toLowerCase();
+    if (newId === id) { // only the capital letters changed
+      user.name = newName; await store.putUser(id, user); invalidateSnapshot();
+      return ok({ ok: true, message: 'Username is now ' + newName + '.' });
+    }
+    if (await store.getUser(newId)) return fail(409, 'The username "' + newName + '" is already taken.');
+    const copy = { ...user, name: newName, pwv: (user.pwv || 0) + 1 };
+    if (!(await store.createUser(newId, copy))) return fail(409, 'The username "' + newName + '" is already taken.');
+    const slot = slotKey(profileOf(user));
+    if (slot) { await store.releaseSlot(slot); await store.claimSlot(slot, newId); }
+    const seen = await store.getSeen(id);
+    if (seen.length) await store.addSeen(newId, seen);
+    await store.deleteUser(id);
+    invalidateSnapshot();
+    return ok({ ok: true, message: user.name + ' is now called ' + newName + '. They were signed out and must sign in with the new name.' });
+  }
+  if (A === 'lock-user') {
+    const user = await needUser(); if (!user) return fail(404, 'No player named "' + body.username + '".');
+    user.locked = !!body.locked;
+    if (user.locked) user.pwv = (user.pwv || 0) + 1;
+    await store.putUser(id, user); invalidateSnapshot();
+    return ok({ ok: true, message: user.name + (user.locked ? ' is locked: no sign-in, hidden from every leaderboard. Their seat is kept.' : ' is unlocked and back on the leaderboards.') });
+  }
+  if (A === 'sign-out') {
+    const user = await needUser(); if (!user) return fail(404, 'No player named "' + body.username + '".');
+    user.pwv = (user.pwv || 0) + 1;
+    await store.putUser(id, user);
+    return ok({ ok: true, message: user.name + ' was signed out everywhere. Their password still works.' });
+  }
+  if (A === 'find-user') {
+    const q = String(body.q || '').trim().toLowerCase();
+    if (q.length < 1) return fail(400, 'Type part of a username.');
+    const rows = (await store.listUsers()).filter(([uid, u]) => uid.includes(q) || String(u.name || '').toLowerCase().includes(q))
+      .map(([, u]) => { const p = profileOf(u); return { cls: p.cls, section: p.section, username: u.name, group: p.group, best: u.best || 0, games: u.games || 0, locked: !!u.locked, adjusted: u.adjusted || null }; })
+      .sort((a, b) => a.username.localeCompare(b.username)).slice(0, 50);
+    return ok({ rows });
+  }
+  // Zero the scores of one section, or one group inside it.
+  if (A === 'reset-section-scores') {
+    if (!SECTIONS.includes(body.section)) return fail(400, 'Unknown section.');
+    const g = body.group ? Number(body.group) : 0;
+    if (g && (!Number.isInteger(g) || g < 1 || g > GROUPS)) return fail(400, 'Unknown group.');
+    const map = {};
+    for (const [uid, u] of await store.listUsers()) {
+      const p = profileOf(u);
+      if (p.section !== body.section || (g && p.group !== g)) continue;
+      u.best = 0; u.games = 0; u.solvedTotal = 0; delete u.adjusted; map[uid] = u;
+    }
+    const n = Object.keys(map).length;
+    if (n) await store.putUsers(map);
+    invalidateSnapshot();
+    return ok({ ok: true, message: 'Scores reset to zero for ' + n + ' accounts in ' + body.section + (g ? ', group ' + g : '') + '.' });
+  }
+  if (A === 'log') return ok({ log: adminLog.slice().reverse() });
+
   if (A === 'reset-all-scores') {
     const all = await store.listUsers();
     const map = {};
-    for (const [uid, u] of all) { u.best = 0; u.games = 0; u.solvedTotal = 0; map[uid] = u; }
+    for (const [uid, u] of all) { u.best = 0; u.games = 0; u.solvedTotal = 0; delete u.adjusted; map[uid] = u; }
     if (all.length) await store.putUsers(map);
     invalidateSnapshot();
     return ok({ ok: true, message: 'Every score was reset to zero for ' + all.length + ' accounts. Accounts and passwords were kept.' });
@@ -526,6 +600,7 @@ async function api(req, res, url) {
       return send(res, 401, { error: 'Wrong username or password.' });
     }
     fails.delete('u:' + id);
+    if (user.locked) return send(res, 403, { error: 'This account is locked. Ask your teacher.' });
     return send(res, 200, { token: makeToken(id, user.pwv || 0), user: publicUser(user) });
   }
 
@@ -551,6 +626,11 @@ async function api(req, res, url) {
       noteFail('admin:' + ip); return send(res, 403, { error: 'Wrong admin key.' });
     }
     const r = await adminAction(body);
+    // Remember what changed (kept in memory, so it is cleared when the server restarts).
+    if (r.status === 200 && r.data && r.data.message && body.action !== 'export') {
+      adminLog.push({ at: Date.now(), action: body.action, message: r.data.message });
+      if (adminLog.length > 200) adminLog.shift();
+    }
     return send(res, r.status, r.data);
   }
 
