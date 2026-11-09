@@ -94,8 +94,13 @@
     <section id="tab-profiles" hidden>
       <div class="panel">
         <div class="row"><div><label for="prof-section">Section</label><select id="prof-section"></select></div><button class="alt small" id="prof-refresh">Refresh</button></div>
-        <p class="hint">Every class number is listed, taken or not. Only you can change a student&rsquo;s section, class number or group.</p>
+        <p class="hint">Every class number is listed, taken or not. Click <b>Edit</b> on a student to change their section, class number, group, best score or username. &#128274; = locked account, &#9998; = score was edited by you.</p>
         <div class="scroll"><table><thead><tr><th>Class</th><th>Username</th><th>Group</th><th class="num">Best</th><th class="num">Games</th><th>Actions</th></tr></thead><tbody id="prof-body"></tbody></table></div>
+      </div>
+      <div class="panel">
+        <h2 style="margin-top:0">Find a student</h2>
+        <form id="find-form" class="row"><div><label for="find-q">Part of a username</label><input id="find-q" autocomplete="off"></div><button type="submit">Search</button></form>
+        <div class="scroll"><table id="find-table" hidden><thead><tr><th>Section</th><th>Class</th><th>Username</th><th>Group</th><th class="num">Best</th><th class="num">Games</th><th>Actions</th></tr></thead><tbody id="find-body"></tbody></table></div>
       </div>
     </section>
 
@@ -119,6 +124,20 @@
         <p>Spreadsheet files (CSV) you can open in Excel or Google Sheets. Passwords are never included.</p>
         <button class="blue" id="ex-profiles">Profiles and scores</button>
         <button class="blue" id="ex-recit">Recitation by day</button>
+      </div>
+      <div class="panel danger">
+        <h2 style="margin-top:0">Reset one section or group</h2>
+        <p>Sets best score, games and solved count back to zero for just that section, or one group inside it. Accounts are kept.</p>
+        <div class="row">
+          <div><label for="rs-section">Section</label><select id="rs-section"></select></div>
+          <div><label for="rs-group">Group</label><select id="rs-group"></select></div>
+          <button id="rs-go">Reset these scores</button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="row"><h2 style="margin:0">Recent changes</h2><button class="alt small" id="log-refresh">Refresh</button></div>
+        <p class="hint">What you changed from this page. This list is kept in memory, so it is cleared whenever the server restarts or goes to sleep.</p>
+        <div class="scroll"><table><thead><tr><th>Time</th><th>Change</th></tr></thead><tbody id="log-body"></tbody></table></div>
       </div>
       <div class="panel danger">
         <h2 style="margin-top:0">Before the event</h2>
@@ -181,6 +200,7 @@ $('nav').onclick = (e) => {
   if (b.dataset.tab === 'boards') run(loadBoards);
   if (b.dataset.tab === 'profiles') run(loadProfiles);
   if (b.dataset.tab === 'recit') run(loadRecit);
+  if (b.dataset.tab === 'tools') run(loadLog);
 };
 
 /* ---------------------------------------------------------- leaderboards */
@@ -212,35 +232,51 @@ async function takenIn(section) {
   const r = await fetch('/api/slots?section=' + encodeURIComponent(section));
   return new Set((await r.json()).taken || []);
 }
+const tag = (r) => (r.locked ? ' \u{1F512}' : '') + (r.adjusted ? ' ✎' : '');
+function profileRow(r, withSection, reload) {
+  const sec = r.section;
+  const tr = h('tr', {}, ...(withSection ? [td(sec === NONE ? 'not a student' : sec)] : []),
+    td(r.cls ? pad(r.cls) : '–'), td(r.username + tag(r)), td(r.group || '–'), td(r.best, 'num'), td(r.games, 'num'), h('td', {},
+    h('button', { class: 'small alt', onclick: () => toggleEditor(tr, r, sec, withSection ? 7 : 6, reload) }, 'Edit'),
+    h('button', { class: 'small blue', onclick: () => resetPassword(r) }, 'Reset password'),
+    h('button', { class: 'small alt', onclick: () => toggleLock(r, reload) }, r.locked ? 'Unlock' : 'Lock'),
+    h('button', { class: 'small', onclick: () => deleteProfile(r, reload) }, 'Delete')));
+  return tr;
+}
 async function loadProfiles() {
   const section = $('prof-section').value;
   const data = await call('list-section', { section });
   const rows = [];
   for (const r of data.rows) {
     if (r.empty) { rows.push(h('tr', { class: 'empty' }, td(pad(r.cls)), h('td', { colspan: 5 }, 'no account'))); continue; }
-    const tr = h('tr', {}, td(r.cls ? pad(r.cls) : '\u2013'), td(r.username), td(r.group || '\u2013'), td(r.best, 'num'), td(r.games, 'num'), h('td', {},
-      h('button', { class: 'small alt', onclick: () => toggleEditor(tr, r, section) }, 'Edit'),
-      h('button', { class: 'small blue', onclick: () => resetPassword(r) }, 'Reset password'),
-      h('button', { class: 'small alt', onclick: () => resetScores(r) }, 'Zero score'),
-      h('button', { class: 'small', onclick: () => deleteProfile(r) }, 'Delete')));
-    rows.push(tr);
+    rows.push(profileRow(r, false, loadProfiles));
   }
   $('prof-body').replaceChildren(...rows);
 }
+async function findUsers() {
+  const q = $('find-q').value.trim();
+  if (!q) return;
+  const data = await call('find-user', { q });
+  $('find-table').hidden = false;
+  $('find-body').replaceChildren(...(data.rows.length ? data.rows.map((r) => profileRow(r, true, findUsers))
+    : [h('tr', { class: 'empty' }, h('td', { colspan: 7 }, 'Nobody matches "' + q + '".'))]));
+}
+$('find-form').onsubmit = (e) => { e.preventDefault(); run(findUsers); };
 function resetPassword(r) {
   const pw = prompt('New password for ' + r.username + ' (at least 6 characters):');
   if (pw === null) return;
   run(async () => { say((await call('reset-password', { username: r.username, newPassword: pw })).message, true); });
 }
-function resetScores(r) {
-  if (!confirm('Set ' + r.username + '\u2019s scores back to zero?')) return;
-  run(async () => { say((await call('remove-scores', { username: r.username })).message, true); await loadProfiles(); });
+function toggleLock(r, reload) {
+  const lock = !r.locked;
+  if (lock && !confirm('Lock ' + r.username + '? They are signed out, cannot sign in, and disappear from every leaderboard until you unlock them.')) return;
+  run(async () => { say((await call('lock-user', { username: r.username, locked: lock })).message, true); await reload(); });
 }
-function deleteProfile(r) {
+function deleteProfile(r, reload) {
   if (!confirm('Delete ' + r.username + ' for good? Their class number becomes free again.')) return;
-  run(async () => { say((await call('delete-user', { username: r.username })).message, true); await loadProfiles(); });
+  run(async () => { say((await call('delete-user', { username: r.username })).message, true); await reload(); });
 }
-async function toggleEditor(tr, r, currentSection) {
+async function toggleEditor(tr, r, currentSection, span, reload) {
   if (tr.nextSibling && tr.nextSibling.classList.contains('editor')) { tr.nextSibling.remove(); return; }
   const sec = h('select', {}), cls = h('select', {}), grp = h('select', {});
   options(sec, sectionList(true)); sec.value = currentSection;
@@ -262,10 +298,30 @@ async function toggleEditor(tr, r, currentSection) {
   await fillClasses();
   const save = h('button', { class: 'small', onclick: () => run(async () => {
     const m = await call('update-profile', { username: r.username, section: sec.value, cls: Number(cls.value || 0), group: Number(grp.value) });
-    say(m.message, true); await loadProfiles();
+    say(m.message, true); await reload();
   }) }, 'Save');
-  const cancel = h('button', { class: 'small alt', onclick: () => ed.remove() }, 'Cancel');
-  const ed = h('tr', { class: 'editor' }, h('td', { colspan: 6 }, h('div', { class: 'row' }, h('div', {}, h('label', {}, 'Section', sec)), classWrap, groupWrap, h('div', {}, save, cancel))));
+  const score = h('input', { type: 'number', min: '0', max: '9999', step: '1', value: String(r.best), class: 'rc', style: 'width:6em' });
+  const saveScore = h('button', { class: 'small', onclick: () => run(async () => {
+    say((await call('set-score', { username: r.username, best: Number(score.value) })).message, true); await reload();
+  }) }, 'Save score');
+  const zero = h('button', { class: 'small alt', onclick: () => {
+    if (!confirm('Set ' + r.username + '’s best score, games and solved count back to zero?')) return;
+    run(async () => { say((await call('remove-scores', { username: r.username })).message, true); await reload(); });
+  } }, 'Zero everything');
+  const nameBox = h('input', { value: r.username, maxlength: '16', autocomplete: 'off', style: 'width:12em' });
+  const saveName = h('button', { class: 'small', onclick: () => run(async () => {
+    say((await call('rename-user', { username: r.username, newName: nameBox.value })).message, true); await reload();
+  }) }, 'Rename');
+  const signOut = h('button', { class: 'small blue', onclick: () => run(async () => {
+    say((await call('sign-out', { username: r.username })).message, true);
+  }) }, 'Sign out everywhere');
+  const cancel = h('button', { class: 'small alt', onclick: () => ed.remove() }, 'Close');
+  const adj = r.adjusted ? h('p', { class: 'hint' }, '✎ Score was edited by you: ' + r.adjusted.from + ' → ' + r.adjusted.to + '.') : null;
+  const ed = h('tr', { class: 'editor' }, h('td', { colspan: span },
+    h('div', { class: 'row' }, h('div', {}, h('label', {}, 'Section', sec)), classWrap, groupWrap, h('div', {}, save)),
+    h('div', { class: 'row' }, h('div', {}, h('label', {}, 'Best score', score)), h('div', {}, saveScore, zero),
+      h('div', {}, h('label', {}, 'Username', nameBox)), h('div', {}, saveName), h('div', {}, signOut, cancel)),
+    adj));
   tr.after(ed);
 }
 $('prof-refresh').onclick = () => run(loadProfiles);
@@ -310,10 +366,24 @@ $('clear-recit').onclick = () => {
   run(async () => { say((await call('clear-recitation')).message, true); });
 };
 
+$('rs-go').onclick = () => {
+  const section = $('rs-section').value, group = $('rs-group').value;
+  if (!confirm('Set every score in ' + section + (group ? ', group ' + group : '') + ' back to zero?')) return;
+  run(async () => { say((await call('reset-section-scores', { section, group: group ? Number(group) : 0 })).message, true); });
+};
+async function loadLog() {
+  const d = await call('log');
+  $('log-body').replaceChildren(...(d.log.length ? d.log.map((e) => h('tr', {}, td(new Date(e.at).toLocaleString()), td(e.message)))
+    : [h('tr', { class: 'empty' }, h('td', { colspan: 2 }, 'No changes since the server last started.'))]));
+}
+$('log-refresh').onclick = () => run(loadLog);
+
 /* ------------------------------------------------------------------ boot */
 options($('board-section'), sectionList(false));
 options($('prof-section'), sectionList(true));
 options($('rc-section'), sectionList(false));
+options($('rs-section'), sectionList(false));
+options($('rs-group'), [['', 'All groups']].concat(Array.from({ length: GROUPS }, (_, i) => [String(i + 1), 'Group ' + (i + 1)])));
 if (KEY) run(async () => { await loadBoards(); open(); }).then(() => { if ($('app').hidden) KEY = ''; });
 </script>
 </body>
