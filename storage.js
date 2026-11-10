@@ -11,6 +11,8 @@
  *
  * What is stored:
  *   users   username -> profile, password hash and best score
+
+ *   claims  "2026-11-10|alice" -> { count, status, ... }  (recitation requests waiting for the teacher)
  *   slots   "Plato:07" -> username   (one account per section + class number)
  *   recit   "Plato|2026-11-09" -> { "7": 2, "12": 1 }   recitations per day
  *   seen    problems each player has already been shown
@@ -38,12 +40,12 @@ class FileStore {
     this.kind = 'file';
     this.file = path.join(dir, 'db.json');
     fs.mkdirSync(dir, { recursive: true });
-    this.db = { meta: {}, users: {}, slots: {}, recit: {}, seen: {} };
+    this.db = { meta: {}, users: {}, slots: {}, recit: {}, claims: {}, seen: {} };
     if (fs.existsSync(this.file)) {
       try { Object.assign(this.db, JSON.parse(fs.readFileSync(this.file, 'utf8'))); }
       catch (e) { console.error('Could not read ' + this.file + ', starting empty:', e.message); }
     }
-    for (const k of ['meta', 'users', 'slots', 'recit', 'seen']) if (!this.db[k]) this.db[k] = {};
+    for (const k of ['meta', 'users', 'slots', 'recit', 'claims', 'seen']) if (!this.db[k]) this.db[k] = {};
     this.timer = null;
   }
   save() {
@@ -86,6 +88,12 @@ class FileStore {
     this.save();
   }
   async clearRecit() { this.db.recit = {}; this.save(); }
+
+  // Recitation requests from students, waiting for the teacher. field = "date|userid"
+  async getClaims() { return Object.entries(this.db.claims); }
+  async getClaim(field) { return this.db.claims[field] || null; }
+  async putClaim(field, obj) { this.db.claims[field] = obj; this.save(); }
+  async delClaims(fields) { for (const f of fields) delete this.db.claims[f]; this.save(); }
 
   async getSeen(id) { return this.db.seen[id] || []; }
   async addSeen(id, keys) {
@@ -168,6 +176,16 @@ class UpstashStore {
     else await this.cmd('HDEL', 'tb:recit', field);
   }
   async clearRecit() { await this.cmd('DEL', 'tb:recit'); }
+
+  async getClaims() {
+    return toPairs(await this.cmd('HGETALL', 'tb:claims')).map(([f, raw]) => [f, JSON.parse(raw)]);
+  }
+  async getClaim(field) {
+    const raw = await this.cmd('HGET', 'tb:claims', field);
+    return raw ? JSON.parse(raw) : null;
+  }
+  async putClaim(field, obj) { await this.cmd('HSET', 'tb:claims', field, JSON.stringify(obj)); }
+  async delClaims(fields) { if (fields.length) await this.cmd('HDEL', 'tb:claims', ...fields); }
 
   async getSeen(id) { return (await this.cmd('ZRANGE', 'tb:seen:' + id, 0, -1)) || []; }
   async addSeen(id, keys) {
