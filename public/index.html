@@ -135,6 +135,10 @@ select.field { appearance: auto; }
 .board .tabs button, .board .tabs button + button { flex: 1 1 auto; border: 3px solid var(--ink); font-size: 1.1rem; padding: 4px 10px; }
 .board .sub { display: block; font-weight: 400; font-size: .85rem; line-height: 1.2; }
 .board .note { margin: 14px 0 6px; }
+.claim { margin: 14px 0 4px; padding: 12px 14px; border: 3px solid var(--ink); background: #fff7c2; }
+.claim .claim-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 8px; }
+.claim select { font: inherit; font-weight: 700; border: 3px solid var(--ink); padding: 6px 8px; background: #fff; }
+.claim .btn { font-size: 1.1rem; padding: 4px 14px; }
 .board table { width: 100%; border-collapse: collapse; }
 .board td { padding: 7px 8px; border-bottom: 2px solid var(--ink); }
 .board tr:last-child td { border-bottom: 0; }
@@ -384,6 +388,16 @@ select.field { appearance: auto; }
         <div class="caption">Leaderboards</div>
         <div class="tabs" id="lb-tabs" role="tablist"></div>
         <p class="hint note" id="lb-note"></p>
+        <div class="claim" id="claim" hidden>
+          <b>Did you recite today?</b>
+          <p class="hint" style="margin-top:2px">Tell your teacher how many times. It goes on the board only after your teacher approves it.</p>
+          <div class="claim-row">
+            <label for="claim-count">Times today</label>
+            <select id="claim-count"></select>
+            <button class="btn blue" id="claim-send" type="button">Send to teacher</button>
+          </div>
+          <p class="hint" id="claim-status" role="status" aria-live="polite"></p>
+        </div>
         <div class="board-scroll"><table><tbody id="lb-body"></tbody></table></div>
       </div>
     </div>
@@ -616,6 +630,8 @@ function messageRow(text) {
 async function loadBoard() {
   const body = $('lb-body'), type = lbType;
   $('lb-note').textContent = BOARDS[type].note;
+  $('claim').hidden = type !== 'recit';
+  if (type === 'recit') loadClaim();
   try {
     const data = await api('/api/board?type=' + type);
     if (type !== lbType) return;
@@ -631,6 +647,29 @@ async function loadBoard() {
     body.replaceChildren(); body.append(messageRow(err.message));
   }
 }
+
+/* ------------------------------------------------- recitation request */
+function showClaim(c, date) {
+  const st = $('claim-status'), send = $('claim-send'), sel = $('claim-count');
+  if (!c) { st.textContent = 'You haven\u2019t sent anything today.'; send.disabled = false; sel.disabled = false; send.textContent = 'Send to teacher'; return; }
+  sel.value = String(c.count);
+  if (c.status === 'pending') { st.textContent = 'Sent: ' + c.count + (c.count === 1 ? ' time' : ' times') + '. Waiting for your teacher. You can change the number and send again.'; send.disabled = false; sel.disabled = false; send.textContent = 'Update request'; }
+  else if (c.status === 'approved') { st.textContent = 'Approved! Your teacher counted ' + c.approved + (c.approved === 1 ? ' time' : ' times') + ' for today.'; send.disabled = true; sel.disabled = true; }
+  else { st.textContent = 'Your teacher did not accept today\u2019s request. Ask your teacher if something is wrong.'; send.disabled = true; sel.disabled = true; }
+}
+async function loadClaim() {
+  try {
+    const d = await api('/api/recit/claim');
+    const sel = $('claim-count');
+    if (!sel.options.length) for (let i = 1; i <= d.max; i++) sel.append(new Option(String(i), String(i)));
+    showClaim(d.claim, d.date);
+  } catch (err) { $('claim-status').textContent = err.message; }
+}
+$('claim-send').onclick = async () => {
+  const send = $('claim-send'); send.disabled = true;
+  try { const d = await api('/api/recit/claim', { count: Number($('claim-count').value) }); showClaim(d.claim, d.date); }
+  catch (err) { $('claim-status').textContent = err.message; send.disabled = false; }
+};
 
 /* ---------------------------------------------------------------- game */
 const WORDS = ['POW!', 'ZAP!', 'BAM!', 'WHAM!', 'KAPOW!', 'BIFF!', 'ZOK!', 'THWACK!', 'SMASH!', 'ZING!'];

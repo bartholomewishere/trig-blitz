@@ -107,6 +107,14 @@
     <!-- ============ RECITATION ============ -->
     <section id="tab-recit" hidden>
       <div class="panel">
+        <div class="row"><h2 style="margin:0">Requests from students</h2><button class="alt small" id="cl-refresh">Refresh</button><button class="alt small" id="cl-clear">Clear old answered</button></div>
+        <p class="hint">Students tell you how many times they recited. Nothing is counted until you press <b>Approve</b>. You can change the number first. Approving <b>adds</b> to that day&rsquo;s count for the student.</p>
+        <div class="scroll"><table><thead><tr><th>Day</th><th>Student</th><th>Section</th><th>Class</th><th>Times</th><th>Actions</th></tr></thead><tbody id="cl-body"></tbody></table></div>
+        <details><summary>Recently answered</summary>
+          <div class="scroll"><table><thead><tr><th>Day</th><th>Student</th><th>Section</th><th>Class</th><th>Asked</th><th>Result</th></tr></thead><tbody id="cl-done"></tbody></table></div>
+        </details>
+      </div>
+      <div class="panel">
         <div class="row">
           <div><label for="rc-section">Section</label><select id="rc-section"></select></div>
           <div><label for="rc-date">Day</label><input id="rc-date" type="date"></div>
@@ -199,7 +207,7 @@ $('nav').onclick = (e) => {
   }
   if (b.dataset.tab === 'boards') run(loadBoards);
   if (b.dataset.tab === 'profiles') run(loadProfiles);
-  if (b.dataset.tab === 'recit') run(loadRecit);
+  if (b.dataset.tab === 'recit') run(async () => { await loadClaims(); await loadRecit(); });
   if (b.dataset.tab === 'tools') run(loadLog);
 };
 
@@ -208,6 +216,7 @@ let overview = null;
 const td = (v, cls) => h('td', cls ? { class: cls } : {}, v);
 async function loadBoards() {
   overview = await call('overview');
+  setPending(overview.pendingClaims || 0);
   if (!$('rc-date').value) $('rc-date').value = overview.today;
   $('showdown').replaceChildren(...overview.showdown.map((r) => h('tr', {}, td(r.rank || '\u2013'), td(r.name), td(r.rank ? r.avg : '\u2013', 'num'), td(r.total, 'num'), td(r.played + ' / ' + r.registered, 'num'))));
   $('b-all').replaceChildren(...(overview.all.length ? overview.all.map((r) => h('tr', {}, td(r.rank), td(r.name), td(r.section === NONE ? 'not a student' : r.section), td(r.section === NONE ? '' : pad(r.cls)), td(r.score, 'num')))
@@ -328,7 +337,7 @@ $('prof-refresh').onclick = () => run(loadProfiles);
 $('prof-section').onchange = () => run(loadProfiles);
 
 /* ------------------------------------------------------------ recitation */
-let rcNames = {};
+let rcNames = {}, rcLoaded = false;
 async function loadRecit() {
   const section = $('rc-section').value, date = $('rc-date').value;
   if (!date) return;
@@ -341,6 +350,7 @@ async function loadRecit() {
     cells.push(h('div', { class: 'cell' + (rcNames[c] ? '' : ' dim') }, h('b', {}, pad(c)), h('small', {}, rcNames[c] || 'no account'), input));
   }
   $('rc-grid').replaceChildren(...cells);
+  rcLoaded = true;
 }
 $('rc-section').onchange = () => run(loadRecit);
 $('rc-date').onchange = () => run(loadRecit);
@@ -349,6 +359,28 @@ $('rc-save').onclick = () => run(async () => {
   for (const i of $('rc-grid').querySelectorAll('input')) { const n = Number(i.value || 0); if (!Number.isInteger(n) || n < 0 || n > 99) throw new Error('Class ' + pad(i.dataset.cls) + ': use a whole number from 0 to 99.'); if (n > 0) counts[i.dataset.cls] = n; }
   say((await call('set-recitation', { section: $('rc-section').value, date: $('rc-date').value, counts })).message, true);
 });
+
+
+/* ---------------------------------------------------- student requests */
+async function loadClaims() {
+  const d = await call('claims-list');
+  const rows = d.pending.map((c) => {
+    const n = h('input', { type: 'number', min: '1', max: '99', step: '1', value: String(c.count), style: 'width:4.5em' });
+    return h('tr', {}, td(c.date), td(c.name), td(c.section), td(pad(c.cls)), td(n), h('td', {},
+      h('button', { class: 'small', onclick: () => run(async () => { say((await call('claim-approve', { field: c.field, count: Number(n.value) })).message, true); await loadClaims(); }) }, 'Approve'),
+      h('button', { class: 'small alt', onclick: () => run(async () => { say((await call('claim-reject', { field: c.field })).message, true); await loadClaims(); }) }, 'Reject')));
+  });
+  $('cl-body').replaceChildren(...(rows.length ? rows : [h('tr', { class: 'empty' }, h('td', { colspan: 6 }, 'No requests waiting.'))]));
+  $('cl-done').replaceChildren(...(d.decided.length ? d.decided.map((c) => h('tr', {}, td(c.date), td(c.name), td(c.section), td(pad(c.cls)), td(c.count), td(c.status === 'approved' ? 'approved +' + c.approved : 'rejected')))
+    : [h('tr', { class: 'empty' }, h('td', { colspan: 6 }, 'Nothing yet.'))]));
+  setPending(d.pending.length);
+  if (rcLoaded) await loadRecit();
+}
+function setPending(n) {
+  document.querySelector('button[data-tab=recit]').textContent = n ? 'Recitation (' + n + ' waiting)' : 'Recitation';
+}
+$('cl-refresh').onclick = () => run(loadClaims);
+$('cl-clear').onclick = () => run(async () => { say((await call('claims-clear-decided')).message, true); await loadClaims(); });
 
 /* ----------------------------------------------------------------- tools */
 function download(name, text) {
