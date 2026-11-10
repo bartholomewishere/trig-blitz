@@ -341,6 +341,7 @@ function csvCell(v) {
 }
 function csv(rows) { return rows.map((r) => r.map(csvCell).join(',')).join('\r\n') + '\r\n'; }
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_CLAIM = 20; // most recitations a student can claim for one day
 const adminLog = []; // recent admin changes, newest last
 
 async function adminAction(body) {
@@ -362,8 +363,9 @@ async function adminAction(body) {
       recit: S.recit.map(({ rank, item }) => ({ rank, name: item.name, cls: item.cls, count: item.count })),
       recitUnregistered: S.recitUnregistered
     });
+    const pendingClaims = (await store.getClaims()).filter(([, c]) => c.status === 'pending').length;
     return ok({
-      today: todayKey(), sections: SECTIONS.map((n) => sec(s.sections[n])),
+      pendingClaims, today: todayKey(), sections: SECTIONS.map((n) => sec(s.sections[n])),
       showdown: s.showdownAdmin.map(({ rank, item }) => ({ rank, name: item.name, avg: round1(item.avg), total: item.total, played: item.played, registered: item.registered })),
       all: s.all.slice(0, 50).map(({ rank, item }) => ({ rank, name: item.name, section: item.section, cls: item.cls, score: item.best }))
     });
@@ -491,6 +493,48 @@ async function adminAction(body) {
     return ok({ ok: true, message: 'Scores reset to zero for ' + n + ' accounts in ' + body.section + (g ? ', group ' + g : '') + '.' });
   }
   if (A === 'log') return ok({ log: adminLog.slice().reverse() });
+
+  // Recitation requests sent by students. They only count once approved here.
+  if (A === 'claims-list') {
+    const all = (await store.getClaims()).map(([field, c]) => ({ field, name: c.name, section: c.section, cls: c.cls, date: c.date, count: c.count, status: c.status, approved: c.approved || 0, at: c.at, decidedAt: c.decidedAt || 0 }));
+    return ok({
+      today: todayKey(), max: MAX_CLAIM,
+      pending: all.filter((c) => c.status === 'pending').sort((a, b) => a.at - b.at),
+      decided: all.filter((c) => c.status !== 'pending').sort((a, b) => b.decidedAt - a.decidedAt).slice(0, 40)
+    });
+  }
+  if (A === 'claim-approve' || A === 'claim-reject') {
+    const claim = await store.getClaim(String(body.field || ''));
+    if (!claim) return fail(404, 'That request no longer exists.');
+    if (claim.status !== 'pending') return fail(409, 'That request was already ' + claim.status + '.');
+    if (A === 'claim-reject') {
+      claim.status = 'rejected'; claim.decidedAt = Date.now();
+      await store.putClaim(body.field, claim);
+      return ok({ ok: true, message: 'Rejected ' + claim.name + '\u2019s request for ' + claim.date + '.' });
+    }
+    const user = await store.getUser(claim.id);
+    if (!user) return fail(404, claim.name + ' no longer has an account.');
+    const p = profileOf(user);
+    if (p.section === NO_SECTION) return fail(400, claim.name + ' is not a student any more.');
+    const n = body.count == null || body.count === '' ? claim.count : Number(body.count);
+    if (!Number.isInteger(n) || n < 1 || n > 99) return fail(400, 'The count must be a whole number from 1 to 99.');
+    const field = p.section + '|' + claim.date;
+    const found = (await store.getRecit()).find(([f]) => f === field);
+    const counts = found ? found[1] : {};
+    counts[p.cls] = (counts[p.cls] || 0) + n; // adds to whatever is already recorded for that day
+    await store.setRecit(field, counts);
+    claim.status = 'approved'; claim.approved = n; claim.decidedAt = Date.now();
+    await store.putClaim(body.field, claim);
+    invalidateSnapshot();
+    return ok({ ok: true, message: 'Approved +' + n + ' for ' + user.name + ' (' + describeSlot(p) + ') on ' + claim.date + '.' });
+  }
+  // Tidy up answered requests from earlier days. Today's stay, so nobody can send twice.
+  if (A === 'claims-clear-decided') {
+    const today = todayKey();
+    const old = (await store.getClaims()).filter(([, c]) => c.status !== 'pending' && c.date < today).map(([f]) => f);
+    await store.delClaims(old);
+    return ok({ ok: true, message: 'Removed ' + old.length + ' answered requests from earlier days.' });
+  }
 
   if (A === 'reset-all-scores') {
     const all = await store.listUsers();
@@ -639,6 +683,28 @@ async function api(req, res, url) {
   if (!me) return send(res, 401, { error: 'Sign in to continue.' });
 
   if (route === 'GET /api/me') return send(res, 200, { user: publicUser(me.user) });
+
+  // A student tells the teacher how many times they recited today. Nothing is recorded
+  // on the recitation board until the teacher approves it on the admin page.
+  if (route === 'GET /api/recit/claim') {
+    if (profileOf(me.user).section === NO_SECTION) return send(res, 403, { error: 'Only students can do this.' });
+    const date = todayKey();
+    const c = await store.getClaim(date + '|' + me.id);
+    return send(res, 200, { date, max: MAX_CLAIM, claim: c ? { count: c.count, status: c.status, approved: c.approved || 0 } : null });
+  }
+  if (route === 'POST /api/recit/claim') {
+    const p = profileOf(me.user);
+    if (p.section === NO_SECTION) return send(res, 403, { error: 'Only students can do this.' });
+    const body = await readBody(req);
+    const count = Number(body.count);
+    if (!Number.isInteger(count) || count < 1 || count > MAX_CLAIM) return send(res, 400, { error: 'Pick a number from 1 to ' + MAX_CLAIM + '.' });
+    const date = todayKey(), field = date + '|' + me.id;
+    const old = await store.getClaim(field);
+    if (old && old.status !== 'pending') return send(res, 409, { error: 'Your teacher already answered today\u2019s request. Ask your teacher if something is wrong.' });
+    const claim = { id: me.id, name: me.user.name, section: p.section, cls: p.cls, date, count, status: 'pending', at: Date.now() };
+    await store.putClaim(field, claim);
+    return send(res, 200, { date, claim: { count, status: 'pending', approved: 0 } });
+  }
 
   if (route === 'POST /api/game/start') {
     for (const [sid, s] of sessions) if (s.userId === me.id) sessions.delete(sid); // one game at a time
