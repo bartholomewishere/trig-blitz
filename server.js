@@ -563,6 +563,41 @@ async function adminAction(body) {
     invalidateSnapshot();
     return ok({ ok: true, message: 'Saved ' + Object.keys(clean).length + ' classes for ' + body.section + ' on ' + body.date + '.' });
   }
+  // Each student's total recitations over all days, and a way to set that total directly.
+  // The difference is kept as a hidden "adjust" day, so the day-by-day grid is not touched.
+  if (A === 'recit-totals' || A === 'set-recit-total') {
+    if (!SECTIONS.includes(body.section)) return fail(400, 'Pick a section.');
+    const pairs = await store.getRecit();
+    const days = {}, adj = {};
+    for (const [f, counts] of pairs) {
+      const [sec, date] = f.split('|');
+      if (sec !== body.section) continue;
+      for (const [c, n] of Object.entries(counts)) { if (date === 'adjust') adj[c] = (adj[c] || 0) + n; else days[c] = (days[c] || 0) + n; }
+    }
+    const names = {};
+    for (const [, u] of await store.listUsers()) { const p = profileOf(u); if (p.section === body.section) names[p.cls] = u.name; }
+    if (A === 'set-recit-total') {
+      const next = { ...adj };
+      let changed = 0;
+      for (const [k, v] of Object.entries(body.totals || {})) {
+        const c = Number(k), n = Number(v);
+        if (!Number.isInteger(c) || c < 1 || c > MAX_CLASS || !Number.isInteger(n) || n < 0 || n > 999) return fail(400, 'Totals must be whole numbers from 0 to 999.');
+        if (!names[c]) return fail(400, 'Class ' + pad2(c) + ' has no account in ' + body.section + '.');
+        const delta = n - (days[c] || 0);
+        if (delta === (adj[c] || 0)) continue;
+        if (delta) next[c] = delta; else delete next[c];
+        changed++;
+      }
+      await store.setRecit(body.section + '|adjust', Object.keys(next).length ? next : null);
+      invalidateSnapshot();
+      const who = Object.keys(body.totals || {}).map((c) => names[Number(c)]).filter(Boolean).slice(0, 3).join(', ');
+      return ok({ ok: true, message: changed ? 'Recitation total changed for ' + changed + ' student' + (changed === 1 ? '' : 's') + ' in ' + body.section + (who ? ' (' + who + ')' : '') + '.' : 'Nothing changed.' });
+    }
+    const rows = [];
+    for (let c = 1; c <= MAX_CLASS; c++) if (names[c] || days[c] || adj[c]) rows.push({ cls: c, username: names[c] || '', total: (days[c] || 0) + (adj[c] || 0), adjust: adj[c] || 0 });
+    return ok({ rows });
+  }
+
   if (A === 'clear-recitation') {
     await store.clearRecit(); invalidateSnapshot();
     return ok({ ok: true, message: 'All recitation counts were cleared.' });
