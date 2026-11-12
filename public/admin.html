@@ -115,6 +115,12 @@
         </details>
       </div>
       <div class="panel">
+        <div class="row"><h2 style="margin:0">Total recitations per student</h2></div>
+        <p class="hint">The total over all days. Type a new total and press <b>Save</b>. The difference is kept as an &ldquo;adjust&rdquo; entry, so the day-by-day entries below stay as they are.</p>
+        <div class="row"><div><label for="rt-section">Section</label><select id="rt-section"></select></div><button class="alt small" id="rt-refresh">Refresh</button></div>
+        <div class="scroll"><table><thead><tr><th>Class</th><th>Username</th><th>Total</th><th>Actions</th></tr></thead><tbody id="rt-body"></tbody></table></div>
+      </div>
+      <div class="panel">
         <div class="row">
           <div><label for="rc-section">Section</label><select id="rc-section"></select></div>
           <div><label for="rc-date">Day</label><input id="rc-date" type="date"></div>
@@ -207,7 +213,7 @@ $('nav').onclick = (e) => {
   }
   if (b.dataset.tab === 'boards') run(loadBoards);
   if (b.dataset.tab === 'profiles') run(loadProfiles);
-  if (b.dataset.tab === 'recit') run(async () => { await loadClaims(); await loadRecit(); });
+  if (b.dataset.tab === 'recit') run(async () => { await loadClaims(); await loadRecit(); await loadTotals(); });
   if (b.dataset.tab === 'tools') run(loadLog);
 };
 
@@ -375,12 +381,34 @@ async function loadClaims() {
     : [h('tr', { class: 'empty' }, h('td', { colspan: 6 }, 'Nothing yet.'))]));
   setPending(d.pending.length);
   if (rcLoaded) await loadRecit();
+  if (rcLoaded) await loadTotals();
 }
 function setPending(n) {
   document.querySelector('button[data-tab=recit]').textContent = n ? 'Recitation (' + n + ' waiting)' : 'Recitation';
 }
 $('cl-refresh').onclick = () => run(loadClaims);
 $('cl-clear').onclick = () => run(async () => { say((await call('claims-clear-decided')).message, true); await loadClaims(); });
+
+
+/* ---------------------------------------------------- total per student */
+async function loadTotals() {
+  const section = $('rt-section').value;
+  const d = await call('recit-totals', { section });
+  const list = await call('list-section', { section });
+  const rows = list.rows.filter((r) => !r.empty).map((r) => {
+    const found = d.rows.find((x) => x.cls === r.cls) || { total: 0, adjust: 0 };
+    const n = h('input', { type: 'number', min: '0', max: '999', step: '1', value: String(found.total), style: 'width:5em' });
+    return h('tr', {}, td(pad(r.cls)), td(r.username + (found.adjust ? ' \u270E' : '')), td(n), h('td', {},
+      h('button', { class: 'small', onclick: () => run(async () => {
+        const v = Number(n.value);
+        if (!Number.isInteger(v) || v < 0 || v > 999) throw new Error('Use a whole number from 0 to 999.');
+        say((await call('set-recit-total', { section, totals: { [r.cls]: v } })).message, true); await loadTotals(); if (rcLoaded) await loadRecit();
+      }) }, 'Save')));
+  });
+  $('rt-body').replaceChildren(...(rows.length ? rows : [h('tr', { class: 'empty' }, h('td', { colspan: 4 }, 'No students in this section yet.'))]));
+}
+$('rt-section').onchange = () => run(loadTotals);
+$('rt-refresh').onclick = () => run(loadTotals);
 
 /* ----------------------------------------------------------------- tools */
 function download(name, text) {
@@ -414,6 +442,7 @@ $('log-refresh').onclick = () => run(loadLog);
 options($('board-section'), sectionList(false));
 options($('prof-section'), sectionList(true));
 options($('rc-section'), sectionList(false));
+options($('rt-section'), sectionList(false));
 options($('rs-section'), sectionList(false));
 options($('rs-group'), [['', 'All groups']].concat(Array.from({ length: GROUPS }, (_, i) => [String(i + 1), 'Group ' + (i + 1)])));
 if (KEY) run(async () => { await loadBoards(); open(); }).then(() => { if ($('app').hidden) KEY = ''; });
