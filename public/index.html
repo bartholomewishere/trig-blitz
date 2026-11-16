@@ -63,6 +63,11 @@ h1, h2, h3 { font-family: var(--display); font-weight: 400; letter-spacing: .03e
 .btn.blue { background: var(--sky); }
 .btn.plain { background: var(--paper); color: var(--ink); -webkit-text-stroke: 0; }
 .btn:disabled { opacity: .55; pointer-events: none; }
+a.btn { display: inline-block; text-decoration: none; text-align: center; color: #fff; }
+a.btn.plain { color: var(--ink); }
+.announce-wrap { margin: 0 0 30px; }
+.announce-wrap .btn { display: block; width: 100%; font-size: clamp(2rem, 7vw, 3.2rem); padding: 14px 20px; }
+#auth .announce-wrap { width: min(420px, 100%); margin: 0; }
 .btn.big { font-size: 2.2rem; padding: 10px 30px; }
 
 .logo {
@@ -283,6 +288,7 @@ select.field { appearance: auto; }
 <section id="auth" hidden>
   <div class="wrap">
     <h1 class="logo">Trig Blitz!<small>60 seconds. No calculators. No mercy.</small></h1>
+    <div class="announce-wrap"><a class="btn blue" href="/announcements.html">&#128226; Announcements</a></div>
     <div class="panel">
       <div class="tabs" role="tablist">
         <button role="tab" id="tab-login" aria-selected="true">Sign in</button>
@@ -329,6 +335,7 @@ select.field { appearance: auto; }
       </div>
     </div>
 
+    <div class="announce-wrap"><a class="btn blue" href="/announcements.html">&#128226; Announcements</a></div>
     <div class="hub-grid">
       <div class="stack">
         <div class="panel ranked">
